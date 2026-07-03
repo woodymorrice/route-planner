@@ -1,5 +1,5 @@
 import type { LatLng } from "../geo";
-import type { GeocodeResult, MapProvider, RouteResult, RoutingProfile } from "./types";
+import type { GeocodeResult, MapProvider, RouteOptions, RouteResult, RoutingProfile } from "./types";
 
 // Set VITE_MAPBOX_TOKEN in .env.local (see CLAUDE.md) and VITE_MAP_PROVIDER=mapbox.
 const TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined;
@@ -39,36 +39,54 @@ async function geocode(query: string): Promise<GeocodeResult[]> {
   }));
 }
 
-async function route(waypoints: LatLng[], profile: RoutingProfile): Promise<RouteResult> {
-  if (waypoints.length < 2) {
-    throw new Error("route() requires at least 2 waypoints");
-  }
-  const token = requireToken();
-
-  const coords = waypoints.map((p) => `${p.lng},${p.lat}`).join(";");
+async function fetchRoute(coords: string, profile: RoutingProfile, token: string, exclude?: string) {
   const url = new URL(
     `https://api.mapbox.com/directions/v5/mapbox/${DIRECTIONS_PROFILE[profile]}/${coords}`,
   );
   url.searchParams.set("geometries", "geojson");
   url.searchParams.set("overview", "full");
+  url.searchParams.set("steps", "true");
   url.searchParams.set("access_token", token);
+  if (exclude) url.searchParams.set("exclude", exclude);
 
   const res = await fetch(url.toString());
-  if (!res.ok) {
-    throw new Error(`Routing failed: ${res.status} ${res.statusText}`);
+  return { res, data: await res.json() };
+}
+
+async function route(
+  waypoints: LatLng[],
+  profile: RoutingProfile,
+  options: RouteOptions = {},
+): Promise<RouteResult> {
+  if (waypoints.length < 2) {
+    throw new Error("route() requires at least 2 waypoints");
+  }
+  const token = requireToken();
+  const coords = waypoints.map((p) => `${p.lng},${p.lat}`).join(";");
+
+  let { res, data } = await fetchRoute(coords, profile, token, options.avoidHighways ? "motorway" : undefined);
+
+  // The walking/cycling profiles only support excluding a small set of road
+  // classes (mainly "ferry") — fall back to a plain request if this profile
+  // rejects the exclude value rather than failing generation over it.
+  if (!res.ok && options.avoidHighways) {
+    ({ res, data } = await fetchRoute(coords, profile, token));
   }
 
-  const data = await res.json();
   const routeData = data.routes?.[0];
-  if (!routeData) {
+  if (!res.ok || !routeData) {
     throw new Error(`Routing failed: ${data.message ?? data.code ?? "unknown error"}`);
   }
 
   const path: LatLng[] = routeData.geometry.coordinates.map(
     ([lng, lat]: [number, number]) => ({ lat, lng }),
   );
+  const steps = routeData.legs.flatMap(
+    (leg: { steps: { name: string; distance: number }[] }) =>
+      leg.steps.map((s) => ({ name: s.name, distanceMeters: s.distance })),
+  );
 
-  return { distanceMeters: routeData.distance, path };
+  return { distanceMeters: routeData.distance, path, steps };
 }
 
 export const mapboxProvider: MapProvider = {

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { MapContainer, TileLayer, Marker, Circle, Polyline, useMap, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 import "../lib/leafletIconFix";
-import { bearingDegrees, distanceMeters, midpoint, type LatLng } from "../lib/geo";
+import { distanceMeters, midpoint, type LatLng } from "../lib/geo";
 import type { MapProvider } from "../lib/providers/types";
 import type { LoopRouteResult } from "../lib/routeGenerator";
 
@@ -18,7 +18,8 @@ interface MapViewProps {
   provider: MapProvider;
   startPoint: LatLng | null;
   onSetStartPoint: (p: LatLng) => void;
-  onDragComplete: (bearingDeg: number) => void;
+  /** Called with the point the user released the drag on — opposite end of the diameter from startPoint. */
+  onDragComplete: (dragEnd: LatLng) => void;
   route: LoopRouteResult | null;
   interactionsDisabled: boolean;
   flyToTarget: FlyToTarget | null;
@@ -78,7 +79,7 @@ function RouteLayer({
       if (startPoint) {
         const end = { lat: e.latlng.lat, lng: e.latlng.lng };
         if (distanceMeters(startPoint, end) > 5) {
-          onDragComplete(bearingDegrees(startPoint, end));
+          onDragComplete(end);
         }
       }
     },

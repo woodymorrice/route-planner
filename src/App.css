@@ -107,6 +107,19 @@
   background: var(--bg);
 }
 
+.toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  padding: 4px 0;
+  cursor: pointer;
+}
+
+.toggle input {
+  margin-top: 2px;
+}
+
 .instructions {
   margin: 0;
   padding-left: 18px;

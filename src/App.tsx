@@ -4,12 +4,18 @@ import { MapView, type FlyToTarget } from "./components/MapView";
 import { Sidebar, toMeters, type DistanceUnit } from "./components/Sidebar";
 import type { LatLng } from "./lib/geo";
 import { mapProvider } from "./lib/providers";
-import { generateLoopRoute, type LoopRouteResult } from "./lib/routeGenerator";
+import {
+  DEFAULT_ROUTE_OPTIONS,
+  generateLoopRoute,
+  type LoopRouteResult,
+  type RouteGenerationOptions,
+} from "./lib/routeGenerator";
 
 function App() {
   const [startPoint, setStartPoint] = useState<LatLng | null>(null);
   const [distanceValue, setDistanceValue] = useState(5);
   const [unit, setUnit] = useState<DistanceUnit>("km");
+  const [routeOptions, setRouteOptions] = useState<RouteGenerationOptions>(DEFAULT_ROUTE_OPTIONS);
   const [route, setRoute] = useState<LoopRouteResult | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -22,7 +28,7 @@ function App() {
   }, []);
 
   const handleDragComplete = useCallback(
-    async (bearingDeg: number) => {
+    async (dragEnd: LatLng) => {
       if (!startPoint) return;
       const targetMeters = toMeters(distanceValue, unit);
       if (targetMeters <= 0) {
@@ -33,7 +39,13 @@ function App() {
       setIsGenerating(true);
       setError(null);
       try {
-        const result = await generateLoopRoute(mapProvider, startPoint, targetMeters, bearingDeg);
+        const result = await generateLoopRoute(
+          mapProvider,
+          startPoint,
+          dragEnd,
+          targetMeters,
+          routeOptions,
+        );
         setRoute(result);
       } catch (err) {
         setRoute(null);
@@ -42,7 +54,7 @@ function App() {
         setIsGenerating(false);
       }
     },
-    [startPoint, distanceValue, unit],
+    [startPoint, distanceValue, unit, routeOptions],
   );
 
   const handleLocationSelected = useCallback((p: LatLng) => {
@@ -63,6 +75,8 @@ function App() {
         unit={unit}
         onDistanceValueChange={setDistanceValue}
         onUnitChange={setUnit}
+        routeOptions={routeOptions}
+        onRouteOptionsChange={setRouteOptions}
         onLocationSelected={handleLocationSelected}
         startPoint={startPoint}
         route={route}

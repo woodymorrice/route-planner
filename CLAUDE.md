@@ -1,9 +1,11 @@
 # Loop Route Planner
 
 A small web app for planning a running loop: search/pan to an area, click to
-drop a starting point, drag away from that point to aim a direction, and on
-release it generates a real street-following loop route of a target distance
-that starts and ends at that point.
+drop a starting point, drag away from that point to draw a circle (start and
+the release point are opposite ends of its diameter — that circle is the area
+the route is allowed to explore), and on release it generates a real
+street-following loop route that starts and ends at that point and is at
+least the target distance from the sidebar's distance box.
 
 ## Stack
 
@@ -27,8 +29,8 @@ src/
       index.ts                 Picks the active provider from VITE_MAP_PROVIDER
   components/
     MapView.tsx             Leaflet map, start-point marker, drag interaction, route/preview rendering
-    Sidebar.tsx              Distance input, location search, status/instructions
-  App.tsx                    Top-level state (start point, target distance, generated route)
+    Sidebar.tsx              Distance input, route option toggles, location search, status/instructions
+  App.tsx                    Top-level state (start point, target distance, route options, generated route)
 ```
 
 Everything the map/routing backend does is behind the `MapProvider` interface
@@ -40,26 +42,70 @@ rewrite.
 
 ## How the loop route is generated (`src/lib/routeGenerator.ts`)
 
-There's no API that generates "a loop route of exactly X km" — routing
-engines only route between waypoints. The approach here:
+There's no API that generates "a loop route of at least X km, roughly
+circular, avoiding backtracking and highways" — routing engines only route
+between waypoints along the street graph. Everything here is a heuristic
+built on top of plain point-to-point routing, controllable via
+`RouteGenerationOptions` (which the sidebar's three toggles map directly
+onto: `maximizeRoundness`, `avoidBacktracking`, `avoidHighways`).
 
-1. Take the bearing the user dragged in, and a radius guess of
-   `targetDistance / (2π)` (i.e. what the radius would be if the route were
-   a perfect circle).
-2. Place three waypoints on a circle of that radius around the start point,
-   spread across the dragged bearing (`bearing - 100°, bearing, bearing +
-   100°`), and ask the routing engine for the real path through
-   `start → wp1 → wp2 → wp3 → start`.
-3. Compare the actual returned distance to the target, scale the radius by
-   `target / actual`, and repeat (up to 5 iterations, stops within 8% of
-   target).
+**The region.** The circle the user drags (center = midpoint of the start
+point and the release point, radius = half the distance between them, so the
+start point always sits on the boundary) is the hard cap on how far the route
+is allowed to reach — `maxRadius` in the code.
+
+**Isodiametric shape.** For a fixed diameter, a circle encloses the most
+area (the isodiametric property) — so to make the generated loop use as much
+of the drawn area as possible, waypoints are placed on a regular polygon
+inscribed in a circle of some trial radius `r ≤ maxRadius`, with the start
+point fixed as one vertex. `maximizeRoundness` on uses an 8-sided polygon
+(closer to a circle); off uses a 3-sided one (a sharper, more direct loop).
+The routing engine is asked for the real path through all the polygon's
+vertices and back to start.
+
+**Hitting the target distance, always ≥.** Starting from
+`r = min(maxRadius, targetDistance / 2π)` (what the radius would be if the
+route were a perfect circle), each iteration scales `r` by
+`target / actual returned distance` and re-queries, capped at `maxRadius`,
+for up to 5 iterations or until within 5% over target. The candidate kept is
+always the smallest-overshoot result that's `>= targetDistance` — undershoots
+are only used to decide which direction to adjust `r`, never returned. If
+`r` is capped at `maxRadius` and the result is still short of the target, the
+loop stops early (growing further can't help) and `AreaTooSmallError` is
+thrown, with the largest distance actually achieved in that area so the UI
+can suggest a bigger drag or a shorter target.
+
+**Avoiding backtracking.** After landing on a candidate, `computeBacktrackRatio`
+quantizes the route's points to an ~11m grid and measures what fraction of
+the route's length lies on an (undirected) grid edge it also traverses
+elsewhere — i.e. doubling back over the same street. If `avoidBacktracking`
+is on and that ratio is above 15%, it retries the same radius with the
+polygon rotated (up to 2 extra tries), keeping whichever attempt has the
+lowest backtrack ratio among those still meeting the distance target.
+
+**Avoiding highways.** Best-effort only, two mechanisms:
+1. The OSRM/Mapbox request includes `exclude=motorway,trunk` (or `motorway`
+   for Mapbox) when `avoidHighways` is on. If the routing profile doesn't
+   support excluding those classes it errors out and the provider
+   transparently retries without `exclude` — **the FOSSGIS `routed-foot`
+   profile this app defaults to does not support it**, so on the default
+   setup this mechanism is currently a no-op. It's wired up so it starts
+   working automatically if you switch to a profile/provider that does
+   support it (e.g. a self-hosted OSRM with a foot profile that defines
+   excludable classes).
+2. `estimateHighwayFraction` pattern-matches step names against things like
+   "Interstate", "Freeway", "I-90" and reports what fraction of the route's
+   distance falls on matches. This only catches *named* highways in
+   English-style naming — most footway/residential steps are unnamed and
+   won't match either way. It's currently informational (shown in the
+   sidebar) rather than fed back into candidate selection.
 
 This is a heuristic, not an optimal solver — real street networks aren't
-circular, so how close/round the result is will vary a lot by area (dense
-grid vs. sparse suburban streets vs. a dead-end near water). If you want to
-improve it later, likely directions: try multiple candidate bearings and keep
-the best-fitting one, or increase/vary the waypoint count based on target
-distance.
+regular polygons, so how close/round the result is will vary a lot by area
+(dense grid vs. sparse suburban streets vs. a dead-end near water). If you
+want to improve it later, likely directions: use the highway-fraction score
+to actually pick among multiple candidates (not just report it), or query
+Overpass for real road classifications instead of guessing from step names.
 
 ## Pivoting map/routing providers
 
@@ -134,6 +180,13 @@ npm run dev
 - The loop heuristic can produce a fairly irregular shape in sparse street
   networks (it'll follow whatever roads exist near the target radius, not
   necessarily a smooth loop).
+- "Avoid highways" doesn't actually exclude anything on the default OSM
+  provider (the FOSSGIS `routed-foot` profile doesn't support `exclude`) — it
+  only scores/reports named highway matches. See the routeGenerator section
+  above.
+- "Avoid backtracking" reduces but doesn't eliminate doubling back — it's a
+  bounded number of retries with a rotated polygon, not a search over the
+  full street graph.
 - Public Nominatim/OSRM demo servers are not meant for production traffic —
   see the provider notes above before deploying this somewhere with real
   usage.

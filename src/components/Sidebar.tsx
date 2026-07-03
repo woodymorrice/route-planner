@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { LatLng } from "../lib/geo";
 import type { GeocodeResult, MapProvider } from "../lib/providers/types";
-import type { LoopRouteResult } from "../lib/routeGenerator";
+import type { LoopRouteResult, RouteGenerationOptions } from "../lib/routeGenerator";
 
 export type DistanceUnit = "km" | "mi";
 
@@ -21,6 +21,8 @@ interface SidebarProps {
   unit: DistanceUnit;
   onDistanceValueChange: (v: number) => void;
   onUnitChange: (u: DistanceUnit) => void;
+  routeOptions: RouteGenerationOptions;
+  onRouteOptionsChange: (o: RouteGenerationOptions) => void;
   onLocationSelected: (p: LatLng, label: string) => void;
   startPoint: LatLng | null;
   route: LoopRouteResult | null;
@@ -35,6 +37,8 @@ export function Sidebar({
   unit,
   onDistanceValueChange,
   onUnitChange,
+  routeOptions,
+  onRouteOptionsChange,
   onLocationSelected,
   startPoint,
   route,
@@ -69,6 +73,10 @@ export function Sidebar({
     onLocationSelected(r.position, r.label);
     setResults([]);
     setQuery(r.label);
+  }
+
+  function toggle(key: keyof RouteGenerationOptions) {
+    onRouteOptionsChange({ ...routeOptions, [key]: !routeOptions[key] });
   }
 
   return (
@@ -120,11 +128,39 @@ export function Sidebar({
       </section>
 
       <section>
+        <h2>Route options</h2>
+        <label className="toggle">
+          <input
+            type="checkbox"
+            checked={routeOptions.maximizeRoundness}
+            onChange={() => toggle("maximizeRoundness")}
+          />
+          Maximize roundness (use the full drawn area)
+        </label>
+        <label className="toggle">
+          <input
+            type="checkbox"
+            checked={routeOptions.avoidBacktracking}
+            onChange={() => toggle("avoidBacktracking")}
+          />
+          Avoid backtracking on the same street
+        </label>
+        <label className="toggle">
+          <input
+            type="checkbox"
+            checked={routeOptions.avoidHighways}
+            onChange={() => toggle("avoidHighways")}
+          />
+          Avoid highways/freeways (best effort)
+        </label>
+      </section>
+
+      <section>
         <h2>How to use</h2>
         <ol className="instructions">
           <li>Click the map to drop a starting point.</li>
-          <li>Press and drag from that point in the direction you want to run.</li>
-          <li>Release the mouse to generate a loop route of your target distance.</li>
+          <li>Press and drag from that point to draw the area you want to run in.</li>
+          <li>Release the mouse to generate a loop route of your target distance within that area.</li>
         </ol>
       </section>
 
@@ -135,9 +171,13 @@ export function Sidebar({
           <div className="route-stats">
             <p>
               <strong>{fromMeters(route.distanceMeters, unit).toFixed(2)} {unit}</strong> route
-              generated (target {fromMeters(route.targetDistanceMeters, unit).toFixed(2)} {unit})
+              generated (target {fromMeters(route.targetDistanceMeters, unit).toFixed(2)} {unit}+)
             </p>
-            <p className="muted">{route.iterations} attempt{route.iterations === 1 ? "" : "s"}</p>
+            <p className="muted">
+              {route.iterations} attempt{route.iterations === 1 ? "" : "s"}
+              {routeOptions.avoidBacktracking && ` · ${(route.backtrackRatio * 100).toFixed(0)}% backtracking`}
+              {routeOptions.avoidHighways && ` · ${(route.highwayFraction * 100).toFixed(0)}% on named highways`}
+            </p>
           </div>
         )}
         {(startPoint || route) && (

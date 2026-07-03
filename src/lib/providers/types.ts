@@ -5,12 +5,28 @@ export interface GeocodeResult {
   position: LatLng;
 }
 
+export interface RouteStep {
+  name: string;
+  distanceMeters: number;
+}
+
 export interface RouteResult {
   distanceMeters: number;
   path: LatLng[];
+  /** Turn-by-turn segments, used for best-effort highway detection by name. */
+  steps: RouteStep[];
 }
 
 export type RoutingProfile = "foot" | "bike" | "car";
+
+export interface RouteOptions {
+  /**
+   * Best-effort: ask the routing engine to avoid motorways/trunk roads.
+   * Not guaranteed — depends on whether the active provider/profile
+   * supports excluding those road classes. See CLAUDE.md.
+   */
+  avoidHighways?: boolean;
+}
 
 /**
  * Everything the app needs from a map backend: tiles to display, a geocoder
@@ -37,5 +53,5 @@ export interface MapProvider {
    * Route through an ordered list of waypoints (first and last may be the
    * same point for a loop) along real streets/paths, snapping to the network.
    */
-  route(waypoints: LatLng[], profile: RoutingProfile): Promise<RouteResult>;
+  route(waypoints: LatLng[], profile: RoutingProfile, options?: RouteOptions): Promise<RouteResult>;
 }

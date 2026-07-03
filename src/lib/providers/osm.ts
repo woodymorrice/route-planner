@@ -1,5 +1,5 @@
 import type { LatLng } from "../geo";
-import type { GeocodeResult, MapProvider, RouteResult, RoutingProfile } from "./types";
+import type { GeocodeResult, MapProvider, RouteOptions, RouteResult, RoutingProfile } from "./types";
 
 // FOSSGIS community OSRM demo server. Free, no API key, but a shared public
 // resource: low volume / personal use only. See CLAUDE.md for self-hosting
@@ -35,30 +35,47 @@ async function geocode(query: string): Promise<GeocodeResult[]> {
   }));
 }
 
-async function route(waypoints: LatLng[], profile: RoutingProfile): Promise<RouteResult> {
+async function fetchRoute(coords: string, profile: RoutingProfile, exclude?: string) {
+  const params = new URLSearchParams({ overview: "full", geometries: "geojson", steps: "true" });
+  if (exclude) params.set("exclude", exclude);
+  const res = await fetch(`${OSRM_BASE_URL}/${OSRM_PROFILE_PATH[profile]}/${coords}?${params}`);
+  return { res, data: await res.json() };
+}
+
+async function route(
+  waypoints: LatLng[],
+  profile: RoutingProfile,
+  options: RouteOptions = {},
+): Promise<RouteResult> {
   if (waypoints.length < 2) {
     throw new Error("route() requires at least 2 waypoints");
   }
 
   const coords = waypoints.map((p) => `${p.lng},${p.lat}`).join(";");
-  const url = `${OSRM_BASE_URL}/${OSRM_PROFILE_PATH[profile]}/${coords}?overview=full&geometries=geojson`;
 
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`Routing failed: ${res.status} ${res.statusText}`);
+  let { res, data } = await fetchRoute(coords, profile, options.avoidHighways ? "motorway,trunk" : undefined);
+
+  // The FOSSGIS foot/bike profiles don't define excludable road classes, so
+  // `exclude` errors out — fall back to a plain request rather than failing
+  // the whole generation over a best-effort preference.
+  if (!res.ok && options.avoidHighways) {
+    ({ res, data } = await fetchRoute(coords, profile));
   }
 
-  const data = await res.json();
-  if (data.code !== "Ok" || !data.routes?.[0]) {
-    throw new Error(`Routing failed: ${data.code ?? "unknown error"}`);
+  if (!res.ok || data.code !== "Ok" || !data.routes?.[0]) {
+    throw new Error(`Routing failed: ${data.code ?? res.statusText ?? "unknown error"}`);
   }
 
   const routeData = data.routes[0];
   const path: LatLng[] = routeData.geometry.coordinates.map(
     ([lng, lat]: [number, number]) => ({ lat, lng }),
   );
+  const steps = routeData.legs.flatMap(
+    (leg: { steps: { name: string; distance: number }[] }) =>
+      leg.steps.map((s) => ({ name: s.name, distanceMeters: s.distance })),
+  );
 
-  return { distanceMeters: routeData.distance, path };
+  return { distanceMeters: routeData.distance, path, steps };
 }
 
 export const osmProvider: MapProvider = {
