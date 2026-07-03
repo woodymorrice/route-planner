@@ -34,6 +34,31 @@
   margin-bottom: 8px;
 }
 
+.mode-toggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.mode-toggle button {
+  flex: 1;
+  padding: 8px 10px;
+  border: none;
+  background: var(--bg);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.mode-toggle button + button {
+  border-left: 1px solid var(--border);
+}
+
+.mode-toggle button.active {
+  background: var(--accent);
+  color: white;
+}
+
 .sidebar section {
   display: flex;
   flex-direction: column;
@@ -151,7 +176,7 @@
   color: var(--danger);
 }
 
-.clear-button {
+.sidebar-button {
   margin-top: 4px;
   padding: 8px 12px;
   border: 1px solid var(--border);
@@ -160,7 +185,7 @@
   align-self: flex-start;
 }
 
-.clear-button:hover {
+.sidebar-button:hover {
   background: var(--bg-subtle);
 }
 

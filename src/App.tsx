@@ -4,6 +4,7 @@ import { MapView, type FlyToTarget } from "./components/MapView";
 import { Sidebar, toMeters, type DistanceUnit } from "./components/Sidebar";
 import type { LatLng } from "./lib/geo";
 import { mapProvider } from "./lib/providers";
+import type { RouteResult } from "./lib/providers/types";
 import {
   DEFAULT_ROUTE_OPTIONS,
   generateLoopRoute,
@@ -11,7 +12,12 @@ import {
   type RouteGenerationOptions,
 } from "./lib/routeGenerator";
 
+export type PlanningMode = "auto" | "manual";
+
 function App() {
+  const [planningMode, setPlanningMode] = useState<PlanningMode>("auto");
+
+  // Auto-generation state
   const [startPoint, setStartPoint] = useState<LatLng | null>(null);
   const [distanceValue, setDistanceValue] = useState(5);
   const [unit, setUnit] = useState<DistanceUnit>("km");
@@ -19,6 +25,14 @@ function App() {
   const [route, setRoute] = useState<LoopRouteResult | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Manual drawing state
+  const [manualPoints, setManualPoints] = useState<LatLng[]>([]);
+  const [manualSegments, setManualSegments] = useState<RouteResult[]>([]);
+  const [manualFinished, setManualFinished] = useState(false);
+  const [isAddingSegment, setIsAddingSegment] = useState(false);
+  const [manualError, setManualError] = useState<string | null>(null);
+
   const [flyToTarget, setFlyToTarget] = useState<FlyToTarget | null>(null);
 
   const handleSetStartPoint = useCallback((p: LatLng) => {
@@ -57,20 +71,89 @@ function App() {
     [startPoint, distanceValue, unit, routeOptions],
   );
 
+  const handleManualPointClick = useCallback(
+    async (p: LatLng) => {
+      if (manualFinished || isAddingSegment) return;
+
+      if (manualPoints.length === 0) {
+        setManualPoints([p]);
+        return;
+      }
+
+      const last = manualPoints[manualPoints.length - 1];
+      setIsAddingSegment(true);
+      setManualError(null);
+      try {
+        const leg = await mapProvider.route([last, p], "foot");
+        setManualPoints((pts) => [...pts, p]);
+        setManualSegments((segs) => [...segs, leg]);
+      } catch (err) {
+        setManualError(err instanceof Error ? err.message : "Couldn't route to that point.");
+      } finally {
+        setIsAddingSegment(false);
+      }
+    },
+    [manualPoints, manualFinished, isAddingSegment],
+  );
+
+  const handleCloseLoop = useCallback(async () => {
+    if (manualFinished || isAddingSegment || manualPoints.length < 2) return;
+
+    const last = manualPoints[manualPoints.length - 1];
+    const start = manualPoints[0];
+    setIsAddingSegment(true);
+    setManualError(null);
+    try {
+      const leg = await mapProvider.route([last, start], "foot");
+      setManualSegments((segs) => [...segs, leg]);
+      setManualFinished(true);
+    } catch (err) {
+      setManualError(err instanceof Error ? err.message : "Couldn't close the loop.");
+    } finally {
+      setIsAddingSegment(false);
+    }
+  }, [manualPoints, manualFinished, isAddingSegment]);
+
+  const handleFinishManualRoute = useCallback(() => {
+    if (manualPoints.length < 2 || manualSegments.length === 0 || manualFinished) return;
+    setManualFinished(true);
+  }, [manualPoints, manualSegments, manualFinished]);
+
   const handleLocationSelected = useCallback((p: LatLng) => {
     setFlyToTarget({ position: p, key: Date.now() });
+  }, []);
+
+  const handlePlanningModeChange = useCallback((mode: PlanningMode) => {
+    setPlanningMode(mode);
+    setStartPoint(null);
+    setRoute(null);
+    setError(null);
+    setManualPoints([]);
+    setManualSegments([]);
+    setManualFinished(false);
+    setManualError(null);
   }, []);
 
   const handleClear = useCallback(() => {
     setStartPoint(null);
     setRoute(null);
     setError(null);
+    setManualPoints([]);
+    setManualSegments([]);
+    setManualFinished(false);
+    setManualError(null);
   }, []);
+
+  const manualDistanceMeters = manualSegments.reduce((sum, s) => sum + s.distanceMeters, 0);
+  const canClear =
+    planningMode === "auto" ? Boolean(startPoint || route) : manualPoints.length > 0;
 
   return (
     <div className="app">
       <Sidebar
         provider={mapProvider}
+        planningMode={planningMode}
+        onPlanningModeChange={handlePlanningModeChange}
         distanceValue={distanceValue}
         unit={unit}
         onDistanceValueChange={setDistanceValue}
@@ -78,21 +161,34 @@ function App() {
         routeOptions={routeOptions}
         onRouteOptionsChange={setRouteOptions}
         onLocationSelected={handleLocationSelected}
-        startPoint={startPoint}
         route={route}
         isGenerating={isGenerating}
         error={error}
+        manualPointCount={manualPoints.length}
+        manualDistanceMeters={manualDistanceMeters}
+        manualFinished={manualFinished}
+        isAddingSegment={isAddingSegment}
+        manualError={manualError}
+        onFinishManualRoute={handleFinishManualRoute}
+        canClear={canClear}
         onClear={handleClear}
       />
       <main className="map-pane">
         <MapView
           provider={mapProvider}
+          planningMode={planningMode}
           startPoint={startPoint}
           onSetStartPoint={handleSetStartPoint}
           onDragComplete={handleDragComplete}
           route={route}
           interactionsDisabled={isGenerating}
           flyToTarget={flyToTarget}
+          manualPoints={manualPoints}
+          manualSegments={manualSegments}
+          manualFinished={manualFinished}
+          isAddingSegment={isAddingSegment}
+          onManualPointClick={handleManualPointClick}
+          onCloseLoop={handleCloseLoop}
         />
       </main>
     </div>

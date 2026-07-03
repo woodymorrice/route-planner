@@ -4,6 +4,7 @@ import type { GeocodeResult, MapProvider } from "../lib/providers/types";
 import type { LoopRouteResult, RouteGenerationOptions } from "../lib/routeGenerator";
 
 export type DistanceUnit = "km" | "mi";
+type PlanningMode = "auto" | "manual";
 
 const MI_PER_KM = 0.621371;
 
@@ -17,6 +18,8 @@ function fromMeters(meters: number, unit: DistanceUnit): number {
 
 interface SidebarProps {
   provider: MapProvider;
+  planningMode: PlanningMode;
+  onPlanningModeChange: (m: PlanningMode) => void;
   distanceValue: number;
   unit: DistanceUnit;
   onDistanceValueChange: (v: number) => void;
@@ -24,15 +27,23 @@ interface SidebarProps {
   routeOptions: RouteGenerationOptions;
   onRouteOptionsChange: (o: RouteGenerationOptions) => void;
   onLocationSelected: (p: LatLng, label: string) => void;
-  startPoint: LatLng | null;
   route: LoopRouteResult | null;
   isGenerating: boolean;
   error: string | null;
+  manualPointCount: number;
+  manualDistanceMeters: number;
+  manualFinished: boolean;
+  isAddingSegment: boolean;
+  manualError: string | null;
+  onFinishManualRoute: () => void;
+  canClear: boolean;
   onClear: () => void;
 }
 
 export function Sidebar({
   provider,
+  planningMode,
+  onPlanningModeChange,
   distanceValue,
   unit,
   onDistanceValueChange,
@@ -40,10 +51,16 @@ export function Sidebar({
   routeOptions,
   onRouteOptionsChange,
   onLocationSelected,
-  startPoint,
   route,
   isGenerating,
   error,
+  manualPointCount,
+  manualDistanceMeters,
+  manualFinished,
+  isAddingSegment,
+  manualError,
+  onFinishManualRoute,
+  canClear,
   onClear,
 }: SidebarProps) {
   const [query, setQuery] = useState("");
@@ -83,6 +100,23 @@ export function Sidebar({
     <aside className="sidebar">
       <h1>Loop Route Planner</h1>
 
+      <div className="mode-toggle">
+        <button
+          type="button"
+          className={planningMode === "auto" ? "active" : ""}
+          onClick={() => onPlanningModeChange("auto")}
+        >
+          Auto-generate
+        </button>
+        <button
+          type="button"
+          className={planningMode === "manual" ? "active" : ""}
+          onClick={() => onPlanningModeChange("manual")}
+        >
+          Draw my own
+        </button>
+      </div>
+
       <section>
         <h2>Go to a location</h2>
         <form onSubmit={runSearch} className="search-form">
@@ -110,82 +144,121 @@ export function Sidebar({
         )}
       </section>
 
-      <section>
-        <h2>Target distance</h2>
-        <div className="distance-input">
-          <input
-            type="number"
-            min={0.1}
-            step={0.1}
-            value={distanceValue}
-            onChange={(e) => onDistanceValueChange(parseFloat(e.target.value) || 0)}
-          />
-          <select value={unit} onChange={(e) => onUnitChange(e.target.value as DistanceUnit)}>
-            <option value="km">km</option>
-            <option value="mi">mi</option>
-          </select>
-        </div>
-      </section>
+      {planningMode === "auto" ? (
+        <>
+          <section>
+            <h2>Target distance</h2>
+            <div className="distance-input">
+              <input
+                type="number"
+                min={0.1}
+                step={0.1}
+                value={distanceValue}
+                onChange={(e) => onDistanceValueChange(parseFloat(e.target.value) || 0)}
+              />
+              <select value={unit} onChange={(e) => onUnitChange(e.target.value as DistanceUnit)}>
+                <option value="km">km</option>
+                <option value="mi">mi</option>
+              </select>
+            </div>
+          </section>
 
-      <section>
-        <h2>Route options</h2>
-        <label className="toggle">
-          <input
-            type="checkbox"
-            checked={routeOptions.maximizeRoundness}
-            onChange={() => toggle("maximizeRoundness")}
-          />
-          Maximize roundness (use the full drawn area)
-        </label>
-        <label className="toggle">
-          <input
-            type="checkbox"
-            checked={routeOptions.avoidBacktracking}
-            onChange={() => toggle("avoidBacktracking")}
-          />
-          Avoid backtracking on the same street
-        </label>
-        <label className="toggle">
-          <input
-            type="checkbox"
-            checked={routeOptions.avoidHighways}
-            onChange={() => toggle("avoidHighways")}
-          />
-          Avoid highways/freeways (best effort)
-        </label>
-      </section>
+          <section>
+            <h2>Route options</h2>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={routeOptions.maximizeRoundness}
+                onChange={() => toggle("maximizeRoundness")}
+              />
+              Maximize roundness (use the full drawn area)
+            </label>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={routeOptions.avoidBacktracking}
+                onChange={() => toggle("avoidBacktracking")}
+              />
+              Avoid backtracking on the same street
+            </label>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={routeOptions.avoidHighways}
+                onChange={() => toggle("avoidHighways")}
+              />
+              Avoid highways/freeways (best effort)
+            </label>
+          </section>
 
-      <section>
-        <h2>How to use</h2>
-        <ol className="instructions">
-          <li>Click the map to drop a starting point.</li>
-          <li>Press and drag from that point to draw the area you want to run in.</li>
-          <li>Release the mouse to generate a loop route of your target distance within that area.</li>
-        </ol>
-      </section>
+          <section>
+            <h2>How to use</h2>
+            <ol className="instructions">
+              <li>Click the map to drop a starting point.</li>
+              <li>Press and drag from that point to draw the area you want to run in.</li>
+              <li>Release the mouse to generate a loop route of your target distance within that area.</li>
+            </ol>
+          </section>
 
-      <section className="status">
-        {isGenerating && <p>Generating route…</p>}
-        {error && <p className="error">{error}</p>}
-        {!isGenerating && route && (
-          <div className="route-stats">
-            <p>
-              <strong>{fromMeters(route.distanceMeters, unit).toFixed(2)} {unit}</strong> route
-              generated (target {fromMeters(route.targetDistanceMeters, unit).toFixed(2)} {unit}+)
-            </p>
-            <p className="muted">
-              {route.iterations} attempt{route.iterations === 1 ? "" : "s"}
-              {routeOptions.avoidBacktracking && ` · ${(route.backtrackRatio * 100).toFixed(0)}% backtracking`}
-              {routeOptions.avoidHighways && ` · ${(route.highwayFraction * 100).toFixed(0)}% on named highways`}
-            </p>
-          </div>
-        )}
-        {(startPoint || route) && (
-          <button type="button" className="clear-button" onClick={onClear}>
-            Clear
-          </button>
-        )}
-      </section>
+          <section className="status">
+            {isGenerating && <p>Generating route…</p>}
+            {error && <p className="error">{error}</p>}
+            {!isGenerating && route && (
+              <div className="route-stats">
+                <p>
+                  <strong>{fromMeters(route.distanceMeters, unit).toFixed(2)} {unit}</strong> route
+                  generated (target {fromMeters(route.targetDistanceMeters, unit).toFixed(2)} {unit}+)
+                </p>
+                <p className="muted">
+                  {route.iterations} attempt{route.iterations === 1 ? "" : "s"}
+                  {routeOptions.avoidBacktracking && ` · ${(route.backtrackRatio * 100).toFixed(0)}% backtracking`}
+                  {routeOptions.avoidHighways && ` · ${(route.highwayFraction * 100).toFixed(0)}% on named highways`}
+                </p>
+              </div>
+            )}
+            {canClear && (
+              <button type="button" className="sidebar-button" onClick={onClear}>
+                Clear
+              </button>
+            )}
+          </section>
+        </>
+      ) : (
+        <>
+          <section>
+            <h2>How to use</h2>
+            <ol className="instructions">
+              <li>Click the map to place a starting point.</li>
+              <li>Keep clicking to extend the route — each click routes directly from the last point.</li>
+              <li>Click "Finish route" below, or click the starting point again to close the loop.</li>
+            </ol>
+          </section>
+
+          <section className="status">
+            <div className="route-stats">
+              <p>
+                <strong>{fromMeters(manualDistanceMeters, unit).toFixed(2)} {unit}</strong>
+                {manualFinished ? " route finished" : manualPointCount > 0 ? " so far" : ""}
+              </p>
+              {isAddingSegment && <p className="muted">Routing to that point…</p>}
+              {!isAddingSegment && manualPointCount === 0 && (
+                <p className="muted">Click the map to start.</p>
+              )}
+            </div>
+            {manualError && <p className="error">{manualError}</p>}
+            {!manualFinished && manualPointCount >= 2 && (
+              <button type="button" className="sidebar-button" onClick={onFinishManualRoute}>
+                Finish route
+              </button>
+            )}
+            {canClear && (
+              <button type="button" className="sidebar-button" onClick={onClear}>
+                Clear
+              </button>
+            )}
+          </section>
+        </>
+      )}
 
       <footer className="provider-badge">Map data: {provider.id.toUpperCase()}</footer>
     </aside>

@@ -1,11 +1,19 @@
 # Loop Route Planner
 
-A small web app for planning a running loop: search/pan to an area, click to
-drop a starting point, drag away from that point to draw a circle (start and
-the release point are opposite ends of its diameter — that circle is the area
-the route is allowed to explore), and on release it generates a real
-street-following loop route that starts and ends at that point and is at
-least the target distance from the sidebar's distance box.
+A small web app for planning a running route, in two modes (toggle at the top
+of the sidebar):
+
+- **Auto-generate:** search/pan to an area, click to drop a starting point,
+  drag away from that point to draw a circle (start and the release point are
+  opposite ends of its diameter — that circle is the area the route is
+  allowed to explore), and on release it generates a real street-following
+  loop route that starts and ends at that point and is at least the target
+  distance from the sidebar's distance box.
+- **Draw my own:** click to place a starting point, then keep clicking to
+  extend the route — each click routes directly (shortest real path) from the
+  previous point to the new one, with the running total distance shown live.
+  Finish via the button, or by clicking the starting point again to close the
+  loop.
 
 ## Stack
 
@@ -28,10 +36,24 @@ src/
       google.ts                Stub — see "Pivoting providers" below
       index.ts                 Picks the active provider from VITE_MAP_PROVIDER
   components/
-    MapView.tsx             Leaflet map, start-point marker, drag interaction, route/preview rendering
-    Sidebar.tsx              Distance input, route option toggles, location search, status/instructions
-  App.tsx                    Top-level state (start point, target distance, route options, generated route)
+    MapView.tsx             Leaflet map; RouteLayer (auto mode) and ManualDrawLayer (manual mode)
+    Sidebar.tsx              Mode toggle, distance input, route option toggles, location search, status/instructions
+  App.tsx                    Top-level state for both modes (planningMode switches which state/handlers are live)
 ```
+
+## Manual drawing mode
+
+Simpler than auto-generation — no heuristics, just point-to-point routing:
+each click after the first calls `provider.route([lastPoint, newPoint],
+"foot")` (no waypoint polygon, no highway/backtrack options — those are
+auto-mode-only) and appends the returned leg to `manualSegments` in
+`App.tsx`. The displayed distance is the sum of `segment.distanceMeters`
+across all legs so far, not a recomputation from the polyline. Clicking the
+start marker again (`ManualDrawLayer`'s marker `click` handler, guarded with
+`L.DomEvent.stopPropagation` so the underlying map click doesn't also fire
+and add a duplicate point) routes one last leg back to the start and marks
+the route finished; the "Finish route" button does the same without that
+closing leg. Once finished, no more points can be added until "Clear."
 
 Everything the map/routing backend does is behind the `MapProvider` interface
 in `src/lib/providers/types.ts`. The rest of the app (`MapView`, `Sidebar`,
