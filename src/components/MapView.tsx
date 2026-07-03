@@ -39,6 +39,8 @@ interface MapViewProps {
   isAddingSegment: boolean;
   onManualPointClick: (p: LatLng) => void;
   onCloseLoop: () => void;
+  /** Called when the user drags a segment out and releases — segmentIndex identifies which leg to split. */
+  onInsertPoint: (segmentIndex: number, point: LatLng) => void;
 }
 
 function FlyToController({ target }: { target: FlyToTarget | null }) {
@@ -151,6 +153,7 @@ function ManualDrawLayer({
   isAddingSegment,
   onPointClick,
   onCloseLoop,
+  onInsertPoint,
 }: {
   points: LatLng[];
   segments: RouteResult[];
@@ -158,16 +161,44 @@ function ManualDrawLayer({
   isAddingSegment: boolean;
   onPointClick: (p: LatLng) => void;
   onCloseLoop: () => void;
+  onInsertPoint: (segmentIndex: number, point: LatLng) => void;
 }) {
-  useMapEvents({
+  const [draggingSegment, setDraggingSegment] = useState<number | null>(null);
+  const [dragPreview, setDragPreview] = useState<LatLng | null>(null);
+  const suppressNextClick = useRef(false);
+
+  const map = useMapEvents({
     click(e) {
-      if (finished || isAddingSegment) return;
+      if (finished || isAddingSegment || draggingSegment !== null) return;
+      if (suppressNextClick.current) {
+        suppressNextClick.current = false;
+        return;
+      }
       onPointClick({ lat: e.latlng.lat, lng: e.latlng.lng });
+    },
+    mousemove(e) {
+      if (draggingSegment === null) return;
+      setDragPreview({ lat: e.latlng.lat, lng: e.latlng.lng });
+    },
+    mouseup(e) {
+      if (draggingSegment === null) return;
+      map.dragging.enable();
+      const index = draggingSegment;
+      setDraggingSegment(null);
+      setDragPreview(null);
+      suppressNextClick.current = true;
+      setTimeout(() => {
+        suppressNextClick.current = false;
+      }, 0);
+      onInsertPoint(index, { lat: e.latlng.lat, lng: e.latlng.lng });
     },
   });
 
-  const drawnPath = segments.flatMap((s) => s.path);
   const canClose = !finished && points.length >= 2;
+
+  function segmentEnd(i: number): LatLng {
+    return i + 1 < points.length ? points[i + 1] : points[0];
+  }
 
   return (
     <>
@@ -193,15 +224,36 @@ function ManualDrawLayer({
         />
       ))}
 
-      {drawnPath.length > 0 && (
+      {segments.map((seg, i) => (
         <Polyline
-          positions={drawnPath.map((p): [number, number] => [p.lat, p.lng])}
+          key={i}
+          positions={seg.path.map((p): [number, number] => [p.lat, p.lng])}
           pathOptions={{
             color: "#16a34a",
             weight: 4,
-            opacity: 0.85,
+            opacity: draggingSegment === i ? 0.25 : 0.85,
             dashArray: finished ? undefined : "8 6",
           }}
+          eventHandlers={{
+            mousedown: (e) => {
+              if (isAddingSegment) return;
+              L.DomEvent.stopPropagation(e.originalEvent);
+              map.dragging.disable();
+              setDraggingSegment(i);
+              setDragPreview({ lat: e.latlng.lat, lng: e.latlng.lng });
+            },
+          }}
+        />
+      ))}
+
+      {draggingSegment !== null && dragPreview && (
+        <Polyline
+          positions={[
+            [points[draggingSegment].lat, points[draggingSegment].lng],
+            [dragPreview.lat, dragPreview.lng],
+            [segmentEnd(draggingSegment).lat, segmentEnd(draggingSegment).lng],
+          ]}
+          pathOptions={{ color: "#16a34a", weight: 3, dashArray: "4 4" }}
         />
       )}
     </>
@@ -223,6 +275,7 @@ export function MapView({
   isAddingSegment,
   onManualPointClick,
   onCloseLoop,
+  onInsertPoint,
 }: MapViewProps) {
   return (
     <MapContainer
@@ -253,6 +306,7 @@ export function MapView({
           isAddingSegment={isAddingSegment}
           onPointClick={onManualPointClick}
           onCloseLoop={onCloseLoop}
+          onInsertPoint={onInsertPoint}
         />
       )}
     </MapContainer>

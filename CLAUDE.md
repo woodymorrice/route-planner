@@ -53,7 +53,21 @@ start marker again (`ManualDrawLayer`'s marker `click` handler, guarded with
 `L.DomEvent.stopPropagation` so the underlying map click doesn't also fire
 and add a duplicate point) routes one last leg back to the start and marks
 the route finished; the "Finish route" button does the same without that
-closing leg. Once finished, no more points can be added until "Clear."
+closing leg. Once finished, no more points can be added via clicking until
+"Clear" — dragging a segment (below) still works after finishing, since it's
+editing rather than extending.
+
+**Editing a leg by dragging it.** Each leg is rendered as its own `Polyline`
+(`segments.map(...)` in `ManualDrawLayer`, not one flattened path) specifically
+so it can carry a per-segment `mousedown` handler. Dragging one and releasing
+calls `onInsertPoint(segmentIndex, releasePoint)`, which in `App.tsx` looks up
+that segment's two endpoints (`manualPoints[segmentIndex]` and
+`manualPoints[segmentIndex + 1]`, wrapping to `manualPoints[0]` if it's the
+closing leg of a finished loop), fires two `provider.route()` calls in
+parallel (endpoint→release point, release point→other endpoint), and splices
+the new point into `manualPoints` and the two new legs into `manualSegments`
+in place of the one that was dragged. A dashed three-point preview line
+follows the cursor during the drag so you can see the split before releasing.
 
 Everything the map/routing backend does is behind the `MapProvider` interface
 in `src/lib/providers/types.ts`. The rest of the app (`MapView`, `Sidebar`,

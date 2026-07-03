@@ -119,6 +119,40 @@ function App() {
     setManualFinished(true);
   }, [manualPoints, manualSegments, manualFinished]);
 
+  const handleInsertManualPoint = useCallback(
+    async (segmentIndex: number, point: LatLng) => {
+      if (isAddingSegment) return;
+      const from = manualPoints[segmentIndex];
+      const to =
+        segmentIndex + 1 < manualPoints.length ? manualPoints[segmentIndex + 1] : manualPoints[0];
+      if (!from || !to) return;
+
+      setIsAddingSegment(true);
+      setManualError(null);
+      try {
+        const [legA, legB] = await Promise.all([
+          mapProvider.route([from, point], "foot"),
+          mapProvider.route([point, to], "foot"),
+        ]);
+        setManualPoints((pts) => {
+          const next = [...pts];
+          next.splice(segmentIndex + 1, 0, point);
+          return next;
+        });
+        setManualSegments((segs) => {
+          const next = [...segs];
+          next.splice(segmentIndex, 1, legA, legB);
+          return next;
+        });
+      } catch (err) {
+        setManualError(err instanceof Error ? err.message : "Couldn't insert a point there.");
+      } finally {
+        setIsAddingSegment(false);
+      }
+    },
+    [manualPoints, isAddingSegment],
+  );
+
   const handleLocationSelected = useCallback((p: LatLng) => {
     setFlyToTarget({ position: p, key: Date.now() });
   }, []);
@@ -189,6 +223,7 @@ function App() {
           isAddingSegment={isAddingSegment}
           onManualPointClick={handleManualPointClick}
           onCloseLoop={handleCloseLoop}
+          onInsertPoint={handleInsertManualPoint}
         />
       </main>
     </div>
