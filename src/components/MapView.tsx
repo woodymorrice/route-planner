@@ -12,6 +12,7 @@ import {
 import L from "leaflet";
 import "../lib/leafletIconFix";
 import { distanceMeters, midpoint, type LatLng } from "../lib/geo";
+import { manualPointAfter, manualPointBefore } from "../lib/manualRoute";
 import type { MapProvider, RouteResult } from "../lib/providers/types";
 import type { LoopRouteResult } from "../lib/routeGenerator";
 
@@ -41,6 +42,10 @@ interface MapViewProps {
   onCloseLoop: () => void;
   /** Called when the user drags a segment out and releases — segmentIndex identifies which leg to split. */
   onInsertPoint: (segmentIndex: number, point: LatLng) => void;
+  /** Called when the user drags an existing point to a new location. */
+  onMovePoint: (index: number, point: LatLng) => void;
+  /** Called on double-click of a non-start point — the two legs on either side are bridged directly. */
+  onRemovePoint: (index: number) => void;
 }
 
 function FlyToController({ target }: { target: FlyToTarget | null }) {
@@ -154,6 +159,8 @@ function ManualDrawLayer({
   onPointClick,
   onCloseLoop,
   onInsertPoint,
+  onMovePoint,
+  onRemovePoint,
 }: {
   points: LatLng[];
   segments: RouteResult[];
@@ -162,14 +169,17 @@ function ManualDrawLayer({
   onPointClick: (p: LatLng) => void;
   onCloseLoop: () => void;
   onInsertPoint: (segmentIndex: number, point: LatLng) => void;
+  onMovePoint: (index: number, point: LatLng) => void;
+  onRemovePoint: (index: number) => void;
 }) {
   const [draggingSegment, setDraggingSegment] = useState<number | null>(null);
+  const [draggingPoint, setDraggingPoint] = useState<number | null>(null);
   const [dragPreview, setDragPreview] = useState<LatLng | null>(null);
   const suppressNextClick = useRef(false);
 
   const map = useMapEvents({
     click(e) {
-      if (finished || isAddingSegment || draggingSegment !== null) return;
+      if (finished || isAddingSegment || draggingSegment !== null || draggingPoint !== null) return;
       if (suppressNextClick.current) {
         suppressNextClick.current = false;
         return;
@@ -177,20 +187,31 @@ function ManualDrawLayer({
       onPointClick({ lat: e.latlng.lat, lng: e.latlng.lng });
     },
     mousemove(e) {
-      if (draggingSegment === null) return;
+      if (draggingSegment === null && draggingPoint === null) return;
       setDragPreview({ lat: e.latlng.lat, lng: e.latlng.lng });
     },
     mouseup(e) {
-      if (draggingSegment === null) return;
+      if (draggingSegment === null && draggingPoint === null) return;
       map.dragging.enable();
-      const index = draggingSegment;
-      setDraggingSegment(null);
-      setDragPreview(null);
+      const release = { lat: e.latlng.lat, lng: e.latlng.lng };
       suppressNextClick.current = true;
       setTimeout(() => {
         suppressNextClick.current = false;
       }, 0);
-      onInsertPoint(index, { lat: e.latlng.lat, lng: e.latlng.lng });
+
+      if (draggingSegment !== null) {
+        const index = draggingSegment;
+        setDraggingSegment(null);
+        setDragPreview(null);
+        onInsertPoint(index, release);
+      } else if (draggingPoint !== null) {
+        const index = draggingPoint;
+        setDraggingPoint(null);
+        setDragPreview(null);
+        if (distanceMeters(points[index], release) > 3) {
+          onMovePoint(index, release);
+        }
+      }
     },
   });
 
@@ -200,29 +221,37 @@ function ManualDrawLayer({
     return i + 1 < points.length ? points[i + 1] : points[0];
   }
 
+  function beginPointDrag(index: number, e: L.LeafletMouseEvent) {
+    if (isAddingSegment || draggingSegment !== null) return;
+    L.DomEvent.stopPropagation(e.originalEvent);
+    map.dragging.disable();
+    setDraggingPoint(index);
+    setDragPreview(points[index]);
+  }
+
+  const dragPointNeighbors =
+    draggingPoint !== null
+      ? {
+          before: manualPointBefore(points, segments.length, draggingPoint),
+          after: manualPointAfter(points, segments.length, draggingPoint),
+        }
+      : null;
+
   return (
     <>
       {points.length > 0 && (
         <Marker
           position={[points[0].lat, points[0].lng]}
           eventHandlers={{
+            mousedown: (e) => beginPointDrag(0, e),
             click: (e) => {
-              if (!canClose || isAddingSegment) return;
               L.DomEvent.stopPropagation(e.originalEvent);
+              if (!canClose || isAddingSegment || draggingPoint !== null) return;
               onCloseLoop();
             },
           }}
         />
       )}
-
-      {points.slice(1).map((p, i) => (
-        <CircleMarker
-          key={i}
-          center={[p.lat, p.lng]}
-          radius={5}
-          pathOptions={{ color: "#15803d", fillColor: "#16a34a", fillOpacity: 1, weight: 2 }}
-        />
-      ))}
 
       {segments.map((seg, i) => (
         <Polyline
@@ -236,7 +265,7 @@ function ManualDrawLayer({
           }}
           eventHandlers={{
             mousedown: (e) => {
-              if (isAddingSegment) return;
+              if (isAddingSegment || draggingPoint !== null) return;
               L.DomEvent.stopPropagation(e.originalEvent);
               map.dragging.disable();
               setDraggingSegment(i);
@@ -245,6 +274,27 @@ function ManualDrawLayer({
           }}
         />
       ))}
+
+      {points.slice(1).map((p, i) => {
+        const index = i + 1;
+        return (
+          <CircleMarker
+            key={index}
+            center={[p.lat, p.lng]}
+            radius={5}
+            pathOptions={{ color: "#15803d", fillColor: "#16a34a", fillOpacity: 1, weight: 2 }}
+            eventHandlers={{
+              mousedown: (e) => beginPointDrag(index, e),
+              click: (e) => L.DomEvent.stopPropagation(e.originalEvent),
+              dblclick: (e) => {
+                L.DomEvent.stopPropagation(e.originalEvent);
+                if (isAddingSegment) return;
+                onRemovePoint(index);
+              },
+            }}
+          />
+        );
+      })}
 
       {draggingSegment !== null && dragPreview && (
         <Polyline
@@ -255,6 +305,29 @@ function ManualDrawLayer({
           ]}
           pathOptions={{ color: "#16a34a", weight: 3, dashArray: "4 4" }}
         />
+      )}
+
+      {draggingPoint !== null && dragPreview && dragPointNeighbors && (
+        <>
+          {dragPointNeighbors.before && (
+            <Polyline
+              positions={[
+                [dragPointNeighbors.before.lat, dragPointNeighbors.before.lng],
+                [dragPreview.lat, dragPreview.lng],
+              ]}
+              pathOptions={{ color: "#16a34a", weight: 3, dashArray: "4 4" }}
+            />
+          )}
+          {dragPointNeighbors.after && (
+            <Polyline
+              positions={[
+                [dragPreview.lat, dragPreview.lng],
+                [dragPointNeighbors.after.lat, dragPointNeighbors.after.lng],
+              ]}
+              pathOptions={{ color: "#16a34a", weight: 3, dashArray: "4 4" }}
+            />
+          )}
+        </>
       )}
     </>
   );
@@ -276,6 +349,8 @@ export function MapView({
   onManualPointClick,
   onCloseLoop,
   onInsertPoint,
+  onMovePoint,
+  onRemovePoint,
 }: MapViewProps) {
   return (
     <MapContainer
@@ -307,6 +382,8 @@ export function MapView({
           onPointClick={onManualPointClick}
           onCloseLoop={onCloseLoop}
           onInsertPoint={onInsertPoint}
+          onMovePoint={onMovePoint}
+          onRemovePoint={onRemovePoint}
         />
       )}
     </MapContainer>

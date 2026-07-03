@@ -69,6 +69,31 @@ the new point into `manualPoints` and the two new legs into `manualSegments`
 in place of the one that was dragged. A dashed three-point preview line
 follows the cursor during the drag so you can see the split before releasing.
 
+**Repositioning a point by dragging it, and removing one with a double-click.**
+Both live in `src/lib/manualRoute.ts`, which centralizes the "what's the
+point/leg before and after index N, accounting for a possible closed-loop
+wrap-around" math shared by `App.tsx` (does the actual re-routing) and
+`MapView.tsx` (draws the live drag preview) so the two don't carry
+independent, driftable copies of that indexing logic:
+- `manualPointBefore` / `manualPointAfter` — the neighboring point, or `null`
+  if there isn't one (open-path ends).
+- `manualSegmentIndexBefore` / `manualSegmentIndexAfter` — the neighboring
+  leg's index into `manualSegments`, or `null`.
+
+Dragging a point (mousedown on the `Marker`/`CircleMarker`, same pattern as
+segment-dragging) calls `onMovePoint(index, releasePoint)` on release, which
+re-routes the one or two adjacent legs to the new position in parallel and
+only commits if the release point is >3m from the original (so an
+accidental micro-drag, or the first click of a double-click, doesn't fire a
+wasted reroute). Double-clicking a non-start point calls `onRemovePoint`,
+which bridges its two neighbors with one new `provider.route()` call and
+splices both the point and its two old legs out in favor of that bridge —
+or, if the point is the open end of an unfinished path, just drops its one
+incoming leg with no bridge needed. Removing the start point (index 0) isn't
+supported — closing/re-anchoring semantics would get ambiguous — so
+`onRemovePoint` is only wired up on the intermediate `CircleMarker`s, not the
+start `Marker`.
+
 Everything the map/routing backend does is behind the `MapProvider` interface
 in `src/lib/providers/types.ts`. The rest of the app (`MapView`, `Sidebar`,
 the route generator) only calls `provider.geocode()`, `provider.route()`, and

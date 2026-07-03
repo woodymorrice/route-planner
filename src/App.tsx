@@ -11,6 +11,12 @@ import {
   type LoopRouteResult,
   type RouteGenerationOptions,
 } from "./lib/routeGenerator";
+import {
+  manualPointAfter,
+  manualPointBefore,
+  manualSegmentIndexAfter,
+  manualSegmentIndexBefore,
+} from "./lib/manualRoute";
 
 export type PlanningMode = "auto" | "manual";
 
@@ -153,6 +159,81 @@ function App() {
     [manualPoints, isAddingSegment],
   );
 
+  const handleMoveManualPoint = useCallback(
+    async (index: number, newPos: LatLng) => {
+      if (isAddingSegment) return;
+      const segmentsLen = manualSegments.length;
+      const before = manualPointBefore(manualPoints, segmentsLen, index);
+      const after = manualPointAfter(manualPoints, segmentsLen, index);
+      const beforeSegIdx = manualSegmentIndexBefore(manualPoints, segmentsLen, index);
+      const afterSegIdx = manualSegmentIndexAfter(segmentsLen, index);
+      if (!before && !after) return;
+
+      setIsAddingSegment(true);
+      setManualError(null);
+      try {
+        const [newBeforeLeg, newAfterLeg] = await Promise.all([
+          before ? mapProvider.route([before, newPos], "foot") : Promise.resolve(null),
+          after ? mapProvider.route([newPos, after], "foot") : Promise.resolve(null),
+        ]);
+        setManualSegments((segs) => {
+          const next = [...segs];
+          if (beforeSegIdx !== null && newBeforeLeg) next[beforeSegIdx] = newBeforeLeg;
+          if (afterSegIdx !== null && newAfterLeg) next[afterSegIdx] = newAfterLeg;
+          return next;
+        });
+        setManualPoints((pts) => {
+          const next = [...pts];
+          next[index] = newPos;
+          return next;
+        });
+      } catch (err) {
+        setManualError(err instanceof Error ? err.message : "Couldn't move that point.");
+      } finally {
+        setIsAddingSegment(false);
+      }
+    },
+    [manualPoints, manualSegments, isAddingSegment],
+  );
+
+  const handleRemoveManualPoint = useCallback(
+    async (index: number) => {
+      if (index === 0 || isAddingSegment) return;
+      const segmentsLen = manualSegments.length;
+      const before = manualPoints[index - 1];
+      const after = manualPointAfter(manualPoints, segmentsLen, index);
+
+      setIsAddingSegment(true);
+      setManualError(null);
+      try {
+        if (after) {
+          const bridged = await mapProvider.route([before, after], "foot");
+          setManualSegments((segs) => {
+            const next = [...segs];
+            next.splice(index - 1, 2, bridged);
+            return next;
+          });
+        } else {
+          setManualSegments((segs) => {
+            const next = [...segs];
+            next.splice(index - 1, 1);
+            return next;
+          });
+        }
+        setManualPoints((pts) => {
+          const next = [...pts];
+          next.splice(index, 1);
+          return next;
+        });
+      } catch (err) {
+        setManualError(err instanceof Error ? err.message : "Couldn't remove that point.");
+      } finally {
+        setIsAddingSegment(false);
+      }
+    },
+    [manualPoints, manualSegments, isAddingSegment],
+  );
+
   const handleLocationSelected = useCallback((p: LatLng) => {
     setFlyToTarget({ position: p, key: Date.now() });
   }, []);
@@ -224,6 +305,8 @@ function App() {
           onManualPointClick={handleManualPointClick}
           onCloseLoop={handleCloseLoop}
           onInsertPoint={handleInsertManualPoint}
+          onMovePoint={handleMoveManualPoint}
+          onRemovePoint={handleRemoveManualPoint}
         />
       </main>
     </div>
